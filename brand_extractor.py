@@ -18,10 +18,11 @@ import webbrowser
 import traceback
 
 class BrandExtractor:
-    def __init__(self, url, output_dir='reports', auto_open=False):
+    def __init__(self, url, output_dir='reports', auto_open=False, debug=False):
         self.url = url
         self.output_dir = output_dir
         self.auto_open = auto_open
+        self.debug = debug
         self.soup = None
         self.styles = {}
         self.css_variables = {}
@@ -32,74 +33,83 @@ class BrandExtractor:
         self.color_frequency = Counter()
         self.logo_path = None
 
+    def log(self, message):
+        """Print debug messages if debug mode is enabled"""
+        if self.debug:
+            print(f"DEBUG: {message}")
+
     async def fetch_page(self):
         try:
-            print(f"Starting fetch_page for URL: {self.url}")
+            self.log(f"Starting fetch_page for URL: {self.url}")
             async with async_playwright() as playwright:
-                print("Launching browser...")
+                self.log("Launching browser...")
                 browser = await playwright.chromium.launch(
                     headless=True,
                     args=['--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage']
                 )
                 
-                print("Creating new page...")
+                self.log("Creating new page...")
                 page = await browser.new_page()
                 
-                print("Setting headers...")
+                self.log("Setting headers...")
                 await page.set_extra_http_headers({
                     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0 Safari/537.36'
                 })
                 
-                print(f"Navigating to URL: {self.url}")
+                self.log(f"Navigating to URL: {self.url}")
                 try:
                     # Set shorter timeout for initial page load
                     response = await page.goto(
                         self.url,
-                        wait_until='domcontentloaded',  # Changed from 'load' to 'domcontentloaded'
+                        wait_until='domcontentloaded',
                         timeout=30000  # 30 seconds timeout
                     )
                     
                     if not response:
-                        print("Error: No response received from page")
+                        self.log("Error: No response received from page")
                         return False
                     if not response.ok:
-                        print(f"Error: HTTP {response.status} received")
+                        self.log(f"Error: HTTP {response.status} received")
                         return False
                         
                     # Wait for the page to be relatively stable
-                    print("Waiting for network to be idle...")
+                    self.log("Waiting for network to be idle...")
                     try:
-                        await page.wait_for_load_state('networkidle', timeout=10000)  # 10 second timeout
+                        await page.wait_for_load_state('networkidle', timeout=10000)
                     except Exception as e:
-                        print(f"Warning: Network did not become idle: {str(e)}")
+                        self.log(f"Warning: Network did not become idle: {str(e)}")
                         # Continue anyway as this isn't critical
                         
                 except Exception as e:
-                    print(f"Error during page navigation: {str(e)}")
-                    traceback.print_exc()
+                    self.log(f"Error during page navigation: {str(e)}")
+                    if self.debug:
+                        traceback.print_exc()
                     return False
 
-                print("Extracting CSS...")
+                self.log("Extracting CSS...")
                 try:
                     await self.extract_css(page)
                 except Exception as e:
-                    print(f"Error extracting CSS: {str(e)}")
-                    traceback.print_exc()
+                    self.log(f"Error extracting CSS: {str(e)}")
+                    if self.debug:
+                        traceback.print_exc()
                     # Continue without CSS - we might still get some content
 
-                print("Getting page content...")
+                self.log("Getting page content...")
                 try:
                     content = await page.content()
                     if not content:
-                        print("Error: No content received from page")
+                        self.log("Error: No content received from page")
                         return False
                     self.soup = BeautifulSoup(content, 'lxml')
+                    self.log(f"Page content length: {len(content)}")
                 except Exception as e:
-                    print(f"Error getting page content: {str(e)}")
-                    traceback.print_exc()
+                    self.log(f"Error getting page content: {str(e)}")
+                    if self.debug:
+                        traceback.print_exc()
                     return False
 
-                print("Looking for logo...")
+                self.log("Looking for logo...")
                 try:
                     # Try to find a logo image
                     logo_found = False
@@ -113,7 +123,7 @@ class BrandExtractor:
                         elif not logo_url.startswith('http'):
                             logo_url = self.url.rstrip('/') + '/' + logo_url
                         try:
-                            print(f"Downloading logo from: {logo_url}")
+                            self.log(f"Downloading logo from: {logo_url}")
                             logo_response = requests.get(logo_url, stream=True)
                             if logo_response.status_code == 200:
                                 logo_ext = os.path.splitext(logo_url.split('?')[0])[-1].lower()
@@ -124,21 +134,21 @@ class BrandExtractor:
                                         import cairosvg
                                         cairosvg.svg2png(bytestring=logo_response.content, write_to=logo_path)
                                     except Exception as svg_err:
-                                        print(f"Error converting SVG logo to PNG: {svg_err}")
+                                        self.log(f"Error converting SVG logo to PNG: {svg_err}")
                                         # Continue without logo
                                 else:
                                     with open(logo_path, 'wb') as f:
                                         f.write(logo_response.content)
                                 self.logo_path = logo_path
                                 logo_found = True
-                                print(f"Logo saved to: {logo_path}")
+                                self.log(f"Logo saved to: {logo_path}")
                         except Exception as e:
-                            print(f"Error downloading logo image: {e}")
+                            self.log(f"Error downloading logo image: {e}")
                             # Continue without logo
 
                     # If no logo image was found, try favicon or og:image
                     if not logo_found:
-                        print("Looking for favicon or og:image...")
+                        self.log("Looking for favicon or og:image...")
                         icon_link = self.soup.find('link', rel=re.compile(r'(icon|shortcut icon)', re.I))
                         if not icon_link:
                             meta_logo = self.soup.find('meta', property='og:image')
@@ -150,7 +160,7 @@ class BrandExtractor:
                             logo_url = icon_link.get('href')
 
                         if logo_url:
-                            print(f"Found alternative logo: {logo_url}")
+                            self.log(f"Found alternative logo: {logo_url}")
                             if logo_url.startswith('//'):
                                 logo_url = 'https:' + logo_url
                             elif logo_url.startswith('/'):
@@ -168,19 +178,20 @@ class BrandExtractor:
                                     with open(logo_path, 'wb') as f:
                                         f.write(logo_response.content)
                                     self.logo_path = logo_path
-                                    print(f"Alternative logo saved to: {logo_path}")
+                                    self.log(f"Alternative logo saved to: {logo_path}")
                             except Exception as e:
-                                print(f"Error downloading fallback logo: {e}")
+                                self.log(f"Error downloading fallback logo: {e}")
                                 # Continue without logo
                 except Exception as e:
-                    print(f"Error processing logo: {e}")
+                    self.log(f"Error processing logo: {e}")
                     # Continue without logo - this shouldn't fail the whole process
 
-                print("Page fetch completed successfully")
+                self.log("Page fetch completed successfully")
                 return True
         except Exception as e:
-            print(f"Error in fetch_page: {str(e)}")
-            traceback.print_exc()
+            self.log(f"Error in fetch_page: {str(e)}")
+            if self.debug:
+                traceback.print_exc()
             return False
             
     async def extract_css(self, page):
@@ -223,7 +234,7 @@ class BrandExtractor:
                     if response.status_code == 200:
                         self.styles[f'external_style_{i}'] = response.text
                 except Exception as e:
-                    print(f"Error fetching external stylesheet {stylesheet_url}: {e}")
+                    self.log(f"Error fetching external stylesheet {stylesheet_url}: {e}")
             
             # Extract inline style attributes
             inline_attrs = await page.evaluate('''
@@ -274,14 +285,14 @@ class BrandExtractor:
             if computed_css:
                 self.styles['computed_styles'] = ' '.join(computed_css)
                 
-            print(f"Found {len(self.styles)} style sources")
+            self.log(f"Found {len(self.styles)} style sources")
             
         except Exception as e:
-            print(f"Error extracting CSS: {e}")
+            self.log(f"Error extracting CSS: {e}")
 
     def analyze_styles(self):
         if not self.styles:
-            print("Warning: No styles were extracted. Style analysis may be incomplete.")
+            self.log("Warning: No styles were extracted. Style analysis may be incomplete.")
             return
             
         root_var_pattern = re.compile(r'--(.*?):\s*(.*?);')
@@ -373,7 +384,7 @@ class BrandExtractor:
                 story.append(Image(self.logo_path, width=1.5 * inch, height=1.5 * inch))
                 story.append(Spacer(1, 12))
             except Exception as e:
-                print(f"Error adding logo to PDF: {e}")
+                self.log(f"Error adding logo to PDF: {e}")
 
         story.append(Paragraph("Brand Style Guide", ParagraphStyle('Title', parent=styles['Title'], fontSize=24, spaceAfter=30)))
         story.append(Paragraph("Website Analysis", styles['Heading2']))
@@ -406,7 +417,7 @@ class BrandExtractor:
                     
                     color_data.append([color_box, color, str(self.color_frequency[color])])
                 except Exception as e:
-                    print(f"Error creating swatch for color {color}: {e}")
+                    self.log(f"Error creating swatch for color {color}: {e}")
                     color_data.append(["Error", color, str(self.color_frequency[color])])
             
             table = Table(color_data)
@@ -478,64 +489,72 @@ class BrandExtractor:
 
     async def extract_branding(self):
         try:
-            print(f"Starting fetch_page for URL: {self.url}")
+            self.log(f"Starting extraction for URL: {self.url}")
             if not await self.fetch_page():
-                print("Error: Failed to fetch page")
+                self.log("Error: Failed to fetch page")
                 return None
             
-            print("Starting font extraction...")
+            self.log("Starting font extraction...")
             try:
                 self.extract_fonts()
+                self.log(f"Found {len(self.fonts)} fonts")
             except Exception as e:
-                print(f"Error extracting fonts: {str(e)}")
-                traceback.print_exc()
+                self.log(f"Error extracting fonts: {str(e)}")
+                if self.debug:
+                    traceback.print_exc()
                 return None
             
-            print("Starting color extraction...")
+            self.log("Starting color extraction...")
             try:
                 self.extract_colors()
+                self.log(f"Found {len(self.colors)} colors")
             except Exception as e:
-                print(f"Error extracting colors: {str(e)}")
-                traceback.print_exc()
+                self.log(f"Error extracting colors: {str(e)}")
+                if self.debug:
+                    traceback.print_exc()
                 return None
             
-            print("Starting theme analysis...")
+            self.log("Starting theme analysis...")
             try:
                 self.analyze_themes()
             except Exception as e:
-                print(f"Error analyzing themes: {str(e)}")
-                traceback.print_exc()
+                self.log(f"Error analyzing themes: {str(e)}")
+                if self.debug:
+                    traceback.print_exc()
                 return None
             
-            print("Starting PDF report generation...")
+            self.log("Starting PDF report generation...")
             try:
                 pdf_path = self.generate_pdf_report()
                 if not pdf_path:
-                    print("Error: PDF generation returned None")
+                    self.log("Error: PDF generation returned None")
                     return None
-                print(f"PDF report generated at: {pdf_path}")
+                self.log(f"PDF report generated at: {pdf_path}")
             except Exception as e:
-                print(f"Error generating PDF report: {str(e)}")
-                traceback.print_exc()
+                self.log(f"Error generating PDF report: {str(e)}")
+                if self.debug:
+                    traceback.print_exc()
                 return None
             
-            print("Starting JSON report generation...")
+            self.log("Starting JSON report generation...")
             try:
                 json_path = self.generate_json_report()
                 if not json_path:
-                    print("Error: JSON generation returned None")
+                    self.log("Error: JSON generation returned None")
                     return None
-                print(f"JSON report generated at: {json_path}")
+                self.log(f"JSON report generated at: {json_path}")
             except Exception as e:
-                print(f"Error generating JSON report: {str(e)}")
-                traceback.print_exc()
+                self.log(f"Error generating JSON report: {str(e)}")
+                if self.debug:
+                    traceback.print_exc()
                 return None
             
-            print(f"Reports generated successfully: PDF={pdf_path}, JSON={json_path}")
+            self.log(f"Reports generated successfully: PDF={pdf_path}, JSON={json_path}")
             return {'pdf': pdf_path, 'json': json_path}
         except Exception as e:
-            print(f"Error in extract_branding: {str(e)}")
-            traceback.print_exc()
+            self.log(f"Error in extract_branding: {str(e)}")
+            if self.debug:
+                traceback.print_exc()
             return None
 
 def parse_arguments():

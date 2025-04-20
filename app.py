@@ -7,8 +7,9 @@ import sys
 from brand_extractor import BrandExtractor
 import asyncio.exceptions
 
-# Set page config
+# Enable debug mode
 st.set_page_config(page_title="Brand Extractor", layout="centered")
+st.set_option('client.showErrorDetails', True)
 
 # Create a temporary directory for reports
 temp_dir = tempfile.mkdtemp()
@@ -16,6 +17,9 @@ st.write(f"Debug: Using temporary directory: {temp_dir}")
 
 st.title("🌐 Brand Style Guide Extractor")
 st.write("Enter a website URL to analyze and download a PDF branding report with colors, fonts, and logos.")
+
+# Add debug mode toggle
+debug_mode = st.sidebar.checkbox("Debug Mode", value=True)
 
 url = st.text_input("Website URL", placeholder="https://www.example.com")
 
@@ -35,13 +39,15 @@ if st.button("Generate Report") and url:
                     import subprocess
                     result = subprocess.run(["playwright", "install", "chromium"], 
                                          capture_output=True, text=True)
+                    if debug_mode:
+                        st.write(f"Debug: Playwright install output: {result.stdout}")
                     if result.returncode != 0:
                         st.error(f"Playwright installation failed: {result.stderr}")
                         return None
                 
                 progress_text.text("Creating extractor instance...")
                 progress_bar.progress(20)
-                extractor = BrandExtractor(url, output_dir=temp_dir, auto_open=False)
+                extractor = BrandExtractor(url, output_dir=temp_dir, auto_open=False, debug=debug_mode)
                 
                 progress_text.text("Analyzing website...")
                 progress_bar.progress(30)
@@ -49,28 +55,37 @@ if st.button("Generate Report") and url:
                 # Set a timeout for the extraction process
                 try:
                     result = await asyncio.wait_for(extractor.extract_branding(), timeout=60)  # 60 second timeout
+                    if debug_mode:
+                        st.write(f"Debug: Raw extraction result: {result}")
                 except asyncio.TimeoutError:
                     st.error("❌ The analysis took too long to complete. Please try again or try a different URL.")
                     return None
                 except Exception as e:
                     st.error(f"Error during extraction: {str(e)}")
-                    st.code(traceback.format_exc())
+                    if debug_mode:
+                        st.code(traceback.format_exc())
                     return None
                 
                 progress_bar.progress(90)
                 progress_text.text("Finalizing report...")
                 
                 if result and 'pdf' in result:
+                    if debug_mode:
+                        st.write(f"Debug: PDF path: {result['pdf']}")
+                        st.write(f"Debug: File exists: {os.path.exists(result['pdf'])}")
                     progress_bar.progress(100)
                     progress_text.text("Report generated successfully!")
                     return result['pdf']
                 else:
+                    if debug_mode:
+                        st.error(f"Debug: Result object: {result}")
                     st.error("No PDF generated in the result")
                     return None
                     
             except Exception as e:
                 st.error(f"Extraction error: {str(e)}")
-                st.code(traceback.format_exc())
+                if debug_mode:
+                    st.code(traceback.format_exc())
                 return None
 
         pdf_path = asyncio.run(run_extractor())
@@ -90,7 +105,8 @@ if st.button("Generate Report") and url:
             
     except Exception as e:
         st.error(f"❌ An error occurred: {str(e)}")
-        st.code(traceback.format_exc())
+        if debug_mode:
+            st.code(traceback.format_exc())
         st.info("Please try again with a different URL or contact support if the issue persists.")
     finally:
         # Clear progress indicators if they exist
