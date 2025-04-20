@@ -11,7 +11,7 @@ st.set_page_config(page_title="Brand Extractor", layout="centered")
 
 # Create a temporary directory for reports
 temp_dir = tempfile.mkdtemp()
-st.write(f"Debug: Temporary directory created at {temp_dir}")
+st.write(f"Debug: Using temporary directory: {temp_dir}")
 
 st.title("🌐 Brand Style Guide Extractor")
 st.write("Enter a website URL to analyze and download a PDF branding report with colors, fonts, and logos.")
@@ -35,18 +35,25 @@ if st.button("Generate Report") and url:
                             st.error(f"Playwright installation failed: {result.stderr}")
                             return None
                     
-                    st.write("Debug: Creating BrandExtractor instance...")
+                    st.write(f"Debug: Creating BrandExtractor instance for URL: {url}")
                     extractor = BrandExtractor(url, output_dir=temp_dir, auto_open=False)
                     
-                    st.write("Debug: Starting extraction...")
+                    st.write("Debug: Starting extraction process...")
                     result = await extractor.extract_branding()
+                    st.write(f"Debug: Extraction result: {result}")
                     
-                    if result:
-                        st.write(f"Debug: Extraction successful, PDF path: {result.get('pdf')}")
-                        return result['pdf']
+                    if result and 'pdf' in result:
+                        st.write(f"Debug: PDF path from result: {result['pdf']}")
+                        if os.path.exists(result['pdf']):
+                            st.write(f"Debug: PDF file exists at path")
+                            return result['pdf']
+                        else:
+                            st.error(f"Debug: PDF file does not exist at path: {result['pdf']}")
+                            return None
                     else:
-                        st.error("Debug: Extraction returned no result")
+                        st.error("Debug: No PDF path in extraction result")
                         return None
+                        
                 except Exception as e:
                     st.error(f"Extraction error: {str(e)}")
                     st.code(traceback.format_exc())
@@ -67,6 +74,7 @@ if st.button("Generate Report") and url:
                     )
             else:
                 st.error("❌ Failed to generate the report. Try another URL.")
+                st.info("Please make sure the URL is accessible and includes the protocol (http:// or https://)")
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
             st.code(traceback.format_exc())

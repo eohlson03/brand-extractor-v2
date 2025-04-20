@@ -15,6 +15,7 @@ import argparse
 import sys
 import json
 import webbrowser
+import traceback
 
 class BrandExtractor:
     def __init__(self, url, output_dir='reports', auto_open=False):
@@ -414,36 +415,63 @@ class BrandExtractor:
 
     async def extract_branding(self):
         try:
+            print(f"Starting fetch_page for URL: {self.url}")
             if not await self.fetch_page():
                 print("Error: Failed to fetch page")
                 return None
             
-            print("Extracting fonts...")
-            self.extract_fonts()
-            
-            print("Extracting colors...")
-            self.extract_colors()
-            
-            print("Analyzing themes...")
-            self.analyze_themes()
-            
-            print("Generating PDF report...")
-            pdf_path = self.generate_pdf_report()
-            if not pdf_path:
-                print("Error: Failed to generate PDF report")
+            print("Starting font extraction...")
+            try:
+                self.extract_fonts()
+            except Exception as e:
+                print(f"Error extracting fonts: {str(e)}")
+                traceback.print_exc()
                 return None
-                
-            print("Generating JSON report...")
-            json_path = self.generate_json_report()
-            if not json_path:
-                print("Error: Failed to generate JSON report")
+            
+            print("Starting color extraction...")
+            try:
+                self.extract_colors()
+            except Exception as e:
+                print(f"Error extracting colors: {str(e)}")
+                traceback.print_exc()
                 return None
-                
+            
+            print("Starting theme analysis...")
+            try:
+                self.analyze_themes()
+            except Exception as e:
+                print(f"Error analyzing themes: {str(e)}")
+                traceback.print_exc()
+                return None
+            
+            print("Starting PDF report generation...")
+            try:
+                pdf_path = self.generate_pdf_report()
+                if not pdf_path:
+                    print("Error: PDF generation returned None")
+                    return None
+                print(f"PDF report generated at: {pdf_path}")
+            except Exception as e:
+                print(f"Error generating PDF report: {str(e)}")
+                traceback.print_exc()
+                return None
+            
+            print("Starting JSON report generation...")
+            try:
+                json_path = self.generate_json_report()
+                if not json_path:
+                    print("Error: JSON generation returned None")
+                    return None
+                print(f"JSON report generated at: {json_path}")
+            except Exception as e:
+                print(f"Error generating JSON report: {str(e)}")
+                traceback.print_exc()
+                return None
+            
             print(f"Reports generated successfully: PDF={pdf_path}, JSON={json_path}")
             return {'pdf': pdf_path, 'json': json_path}
         except Exception as e:
             print(f"Error in extract_branding: {str(e)}")
-            import traceback
             traceback.print_exc()
             return None
 
