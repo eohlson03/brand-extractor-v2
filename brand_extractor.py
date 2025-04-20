@@ -12,7 +12,6 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 import argparse
-import inquirer
 import sys
 import json
 import webbrowser
@@ -448,13 +447,6 @@ class BrandExtractor:
             traceback.print_exc()
             return None
 
-async def get_url_from_prompt():
-    questions = [
-        inquirer.Text('url', message="Enter the website URL to analyze", validate=lambda _, x: x.startswith(('http://', 'https://')))
-    ]
-    answers = inquirer.prompt(questions)
-    return answers['url']
-
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Extract branding information from a website.')
     parser.add_argument('--url', '-u', help='Website URL to analyze')
@@ -466,14 +458,8 @@ async def main():
     args = parse_arguments()
     url = args.url
     if not url:
-        try:
-            url = await get_url_from_prompt()
-        except KeyboardInterrupt:
-            print("\nOperation cancelled by user.")
-            sys.exit(0)
-        except Exception as e:
-            print(f"Error getting URL: {e}")
-            sys.exit(1)
+        print("Error: URL is required")
+        sys.exit(1)
 
     print(f"\nAnalyzing website: {url}\nThis may take a few moments...")
     extractor = BrandExtractor(url, args.output, auto_open=args.open)
