@@ -37,9 +37,14 @@ class BrandExtractor:
             print(f"Starting fetch_page for URL: {self.url}")
             async with async_playwright() as playwright:
                 print("Launching browser...")
-                browser = await playwright.chromium.launch(headless=True)
+                browser = await playwright.chromium.launch(
+                    headless=True,
+                    args=['--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage']
+                )
+                
                 print("Creating new page...")
                 page = await browser.new_page()
+                
                 print("Setting headers...")
                 await page.set_extra_http_headers({
                     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0 Safari/537.36'
@@ -47,20 +52,32 @@ class BrandExtractor:
                 
                 print(f"Navigating to URL: {self.url}")
                 try:
-                    response = await page.goto(self.url, wait_until='load', timeout=60000)
+                    # Set shorter timeout for initial page load
+                    response = await page.goto(
+                        self.url,
+                        wait_until='domcontentloaded',  # Changed from 'load' to 'domcontentloaded'
+                        timeout=30000  # 30 seconds timeout
+                    )
+                    
                     if not response:
                         print("Error: No response received from page")
                         return False
                     if not response.ok:
                         print(f"Error: HTTP {response.status} received")
                         return False
+                        
+                    # Wait for the page to be relatively stable
+                    print("Waiting for network to be idle...")
+                    try:
+                        await page.wait_for_load_state('networkidle', timeout=10000)  # 10 second timeout
+                    except Exception as e:
+                        print(f"Warning: Network did not become idle: {str(e)}")
+                        # Continue anyway as this isn't critical
+                        
                 except Exception as e:
                     print(f"Error during page navigation: {str(e)}")
                     traceback.print_exc()
                     return False
-
-                print("Waiting for page to settle...")
-                await page.wait_for_timeout(3000)  # Wait 3 seconds for JS to settle
 
                 print("Extracting CSS...")
                 try:
@@ -68,8 +85,8 @@ class BrandExtractor:
                 except Exception as e:
                     print(f"Error extracting CSS: {str(e)}")
                     traceback.print_exc()
-                    return False
-                
+                    # Continue without CSS - we might still get some content
+
                 print("Getting page content...")
                 try:
                     content = await page.content()
