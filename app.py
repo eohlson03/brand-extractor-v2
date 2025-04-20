@@ -6,6 +6,8 @@ import traceback
 import sys
 from brand_extractor import BrandExtractor
 import asyncio.exceptions
+import signal
+from concurrent.futures import TimeoutError
 
 # Enable debug mode
 st.set_page_config(page_title="Brand Extractor", layout="centered")
@@ -13,7 +15,8 @@ st.set_option('client.showErrorDetails', True)
 
 # Create a temporary directory for reports
 temp_dir = tempfile.mkdtemp()
-st.write(f"Debug: Using temporary directory: {temp_dir}")
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
 
 st.title("🌐 Brand Style Guide Extractor")
 st.write("Enter a website URL to analyze and download a PDF branding report with colors, fonts, and logos.")
@@ -23,7 +26,11 @@ debug_mode = st.sidebar.checkbox("Debug Mode", value=True)
 
 url = st.text_input("Website URL", placeholder="https://www.example.com")
 
-if st.button("Generate Report") and url:
+# Create columns for the buttons
+col1, col2 = st.columns([1, 4])
+
+if col1.button("Generate Report", disabled=st.session_state.processing) and url:
+    st.session_state.processing = True
     progress_text = st.empty()
     progress_bar = st.progress(0)
     
@@ -62,7 +69,7 @@ if st.button("Generate Report") and url:
                 
                 # Set a timeout for the extraction process
                 try:
-                    result = await asyncio.wait_for(extractor.extract_branding(), timeout=60)  # 60 second timeout
+                    result = await asyncio.wait_for(extractor.extract_branding(), timeout=30)
                     if debug_mode:
                         st.write(f"Debug: Raw extraction result: {result}")
                         
@@ -108,6 +115,8 @@ if st.button("Generate Report") and url:
                     st.write("Full error traceback:")
                     st.code(traceback.format_exc())
                 return None
+            finally:
+                st.session_state.processing = False
 
         pdf_path = asyncio.run(run_extractor())
 
@@ -135,3 +144,9 @@ if st.button("Generate Report") and url:
             progress_bar.empty()
         if 'progress_text' in locals():
             progress_text.empty()
+        st.session_state.processing = False
+
+# Cancel button
+if col2.button("Cancel", disabled=not st.session_state.processing):
+    st.session_state.processing = False
+    st.rerun()
