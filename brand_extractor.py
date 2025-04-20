@@ -34,67 +34,61 @@ class BrandExtractor:
 
     async def fetch_page(self):
         try:
+            print(f"Starting fetch_page for URL: {self.url}")
             async with async_playwright() as playwright:
+                print("Launching browser...")
                 browser = await playwright.chromium.launch(headless=True)
+                print("Creating new page...")
                 page = await browser.new_page()
+                print("Setting headers...")
                 await page.set_extra_http_headers({
                     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0 Safari/537.36'
                 })
-                await page.goto(self.url, wait_until='load', timeout=60000)
+                
+                print(f"Navigating to URL: {self.url}")
+                try:
+                    response = await page.goto(self.url, wait_until='load', timeout=60000)
+                    if not response:
+                        print("Error: No response received from page")
+                        return False
+                    if not response.ok:
+                        print(f"Error: HTTP {response.status} received")
+                        return False
+                except Exception as e:
+                    print(f"Error during page navigation: {str(e)}")
+                    traceback.print_exc()
+                    return False
+
+                print("Waiting for page to settle...")
                 await page.wait_for_timeout(3000)  # Wait 3 seconds for JS to settle
 
+                print("Extracting CSS...")
+                try:
+                    await self.extract_css(page)
+                except Exception as e:
+                    print(f"Error extracting CSS: {str(e)}")
+                    traceback.print_exc()
+                    return False
                 
-                # Extract inline and external CSS
-                await self.extract_css(page)
-                
-                content = await page.content()
-                self.soup = BeautifulSoup(content, 'lxml')
+                print("Getting page content...")
+                try:
+                    content = await page.content()
+                    if not content:
+                        print("Error: No content received from page")
+                        return False
+                    self.soup = BeautifulSoup(content, 'lxml')
+                except Exception as e:
+                    print(f"Error getting page content: {str(e)}")
+                    traceback.print_exc()
+                    return False
 
-                # Try to find a logo image
-                logo_found = False
-                logo_tag = self.soup.find('img', {'alt': re.compile(r'logo', re.I)})
-                if logo_tag and logo_tag.get('src'):
-                    logo_url = logo_tag['src']
-                    if logo_url.startswith('//'):
-                        logo_url = 'https:' + logo_url
-                    elif logo_url.startswith('/'):
-                        logo_url = self.url.rstrip('/') + logo_url
-                    elif not logo_url.startswith('http'):
-                        logo_url = self.url.rstrip('/') + '/' + logo_url
-                    try:
-                        logo_response = requests.get(logo_url, stream=True)
-                        if logo_response.status_code == 200:
-                            logo_ext = os.path.splitext(logo_url.split('?')[0])[-1].lower()
-                            logo_path = os.path.join(self.output_dir, 'logo.png')
-                            os.makedirs(self.output_dir, exist_ok=True)
-                            if logo_ext == '.svg':
-                                try:
-                                    import cairosvg
-                                    cairosvg.svg2png(bytestring=logo_response.content, write_to=logo_path)
-                                except Exception as svg_err:
-                                    print(f"Error converting SVG logo to PNG: {svg_err}")
-                                    return False
-                            else:
-                                with open(logo_path, 'wb') as f:
-                                    f.write(logo_response.content)
-                            self.logo_path = logo_path
-                            logo_found = True
-                    except Exception as e:
-                        print(f"Error downloading logo image: {e}")
-
-                # If no logo image was found, try favicon or og:image
-                if not logo_found:
-                    icon_link = self.soup.find('link', rel=re.compile(r'(icon|shortcut icon)', re.I))
-                    if not icon_link:
-                        meta_logo = self.soup.find('meta', property='og:image')
-                        if meta_logo and meta_logo.get('content'):
-                            logo_url = meta_logo['content']
-                        else:
-                            logo_url = None
-                    else:
-                        logo_url = icon_link.get('href')
-
-                    if logo_url:
+                print("Looking for logo...")
+                try:
+                    # Try to find a logo image
+                    logo_found = False
+                    logo_tag = self.soup.find('img', {'alt': re.compile(r'logo', re.I)})
+                    if logo_tag and logo_tag.get('src'):
+                        logo_url = logo_tag['src']
                         if logo_url.startswith('//'):
                             logo_url = 'https:' + logo_url
                         elif logo_url.startswith('/'):
@@ -102,22 +96,74 @@ class BrandExtractor:
                         elif not logo_url.startswith('http'):
                             logo_url = self.url.rstrip('/') + '/' + logo_url
                         try:
+                            print(f"Downloading logo from: {logo_url}")
                             logo_response = requests.get(logo_url, stream=True)
                             if logo_response.status_code == 200:
                                 logo_ext = os.path.splitext(logo_url.split('?')[0])[-1].lower()
-                                if logo_ext not in ['.jpg', '.jpeg', '.png']:
-                                    logo_ext = '.png'
-                                logo_path = os.path.join(self.output_dir, f'logo{logo_ext}')
+                                logo_path = os.path.join(self.output_dir, 'logo.png')
                                 os.makedirs(self.output_dir, exist_ok=True)
-                                with open(logo_path, 'wb') as f:
-                                    f.write(logo_response.content)
+                                if logo_ext == '.svg':
+                                    try:
+                                        import cairosvg
+                                        cairosvg.svg2png(bytestring=logo_response.content, write_to=logo_path)
+                                    except Exception as svg_err:
+                                        print(f"Error converting SVG logo to PNG: {svg_err}")
+                                        # Continue without logo
+                                else:
+                                    with open(logo_path, 'wb') as f:
+                                        f.write(logo_response.content)
                                 self.logo_path = logo_path
+                                logo_found = True
+                                print(f"Logo saved to: {logo_path}")
                         except Exception as e:
-                            print(f"Error downloading fallback logo: {e}")
+                            print(f"Error downloading logo image: {e}")
+                            # Continue without logo
 
+                    # If no logo image was found, try favicon or og:image
+                    if not logo_found:
+                        print("Looking for favicon or og:image...")
+                        icon_link = self.soup.find('link', rel=re.compile(r'(icon|shortcut icon)', re.I))
+                        if not icon_link:
+                            meta_logo = self.soup.find('meta', property='og:image')
+                            if meta_logo and meta_logo.get('content'):
+                                logo_url = meta_logo['content']
+                            else:
+                                logo_url = None
+                        else:
+                            logo_url = icon_link.get('href')
+
+                        if logo_url:
+                            print(f"Found alternative logo: {logo_url}")
+                            if logo_url.startswith('//'):
+                                logo_url = 'https:' + logo_url
+                            elif logo_url.startswith('/'):
+                                logo_url = self.url.rstrip('/') + logo_url
+                            elif not logo_url.startswith('http'):
+                                logo_url = self.url.rstrip('/') + '/' + logo_url
+                            try:
+                                logo_response = requests.get(logo_url, stream=True)
+                                if logo_response.status_code == 200:
+                                    logo_ext = os.path.splitext(logo_url.split('?')[0])[-1].lower()
+                                    if logo_ext not in ['.jpg', '.jpeg', '.png']:
+                                        logo_ext = '.png'
+                                    logo_path = os.path.join(self.output_dir, f'logo{logo_ext}')
+                                    os.makedirs(self.output_dir, exist_ok=True)
+                                    with open(logo_path, 'wb') as f:
+                                        f.write(logo_response.content)
+                                    self.logo_path = logo_path
+                                    print(f"Alternative logo saved to: {logo_path}")
+                            except Exception as e:
+                                print(f"Error downloading fallback logo: {e}")
+                                # Continue without logo
+                except Exception as e:
+                    print(f"Error processing logo: {e}")
+                    # Continue without logo - this shouldn't fail the whole process
+
+                print("Page fetch completed successfully")
                 return True
         except Exception as e:
-            print(f"Error fetching page: {e}")
+            print(f"Error in fetch_page: {str(e)}")
+            traceback.print_exc()
             return False
             
     async def extract_css(self, page):
