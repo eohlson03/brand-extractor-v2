@@ -2,6 +2,7 @@ import streamlit as st
 import asyncio
 import os
 import tempfile
+import traceback
 from brand_extractor import BrandExtractor
 
 # Set page config
@@ -19,9 +20,20 @@ if st.button("Generate Report") and url:
     with st.spinner("Analyzing website. This may take a moment..."):
         try:
             async def run_extractor():
-                extractor = BrandExtractor(url, output_dir=temp_dir, auto_open=False)
-                result = await extractor.extract_branding()
-                return result['pdf'] if result else None
+                try:
+                    # Install Playwright browsers if not already installed
+                    if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright")):
+                        st.info("Installing required browsers...")
+                        import subprocess
+                        subprocess.run(["playwright", "install", "chromium"], check=True)
+                    
+                    extractor = BrandExtractor(url, output_dir=temp_dir, auto_open=False)
+                    result = await extractor.extract_branding()
+                    return result['pdf'] if result else None
+                except Exception as e:
+                    st.error(f"Extraction error: {str(e)}")
+                    st.code(traceback.format_exc())
+                    return None
 
             pdf_path = asyncio.run(run_extractor())
 
@@ -38,4 +50,5 @@ if st.button("Generate Report") and url:
                 st.error("❌ Failed to generate the report. Try another URL.")
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
+            st.code(traceback.format_exc())
             st.info("Please try again with a different URL or contact support if the issue persists.")
