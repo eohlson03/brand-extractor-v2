@@ -46,6 +46,15 @@ class BrandExtractor:
             try:
                 self.log(f"Attempt {current_retry + 1} of {max_retries + 1}")
                 async with async_playwright() as playwright:
+                    # Try to install browsers if needed
+                    try:
+                        import subprocess
+                        subprocess.run(["playwright", "install", "chromium"], 
+                                    capture_output=True, text=True, check=True)
+                    except Exception as e:
+                        self.log(f"Note: Browser pre-installation attempt: {str(e)}")
+                        # Continue anyway as the browser might already be installed
+                    
                     browser = await playwright.chromium.launch(
                         headless=True,
                         args=[
@@ -54,14 +63,16 @@ class BrandExtractor:
                             '--disable-dev-shm-usage',
                             '--disable-web-security',
                             '--disable-features=IsolateOrigins,site-per-process',
-                            '--ignore-certificate-errors'
+                            '--ignore-certificate-errors',
+                            '--disable-setuid-sandbox',
+                            '--disable-software-rasterizer'
                         ]
                     )
                     
                     context = await browser.new_context(
                         viewport={'width': 1920, 'height': 1080},
                         ignore_https_errors=True,
-                        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     )
                     
                     page = await context.new_page()
@@ -70,8 +81,8 @@ class BrandExtractor:
                     try:
                         response = await page.goto(
                             self.url,
-                            wait_until='networkidle',
-                            timeout=45000  # 45 seconds timeout
+                            wait_until='domcontentloaded',  # Changed from networkidle
+                            timeout=30000  # 30 seconds timeout
                         )
                         
                         if not response:
@@ -86,7 +97,7 @@ class BrandExtractor:
                                 raise Exception(f"HTTP {response.status} received")
                         
                         # Wait for content to be actually loaded
-                        await page.wait_for_selector('body', timeout=10000)
+                        await page.wait_for_selector('body', timeout=5000)
                         
                         # Get the page content
                         content = await page.content()
@@ -101,6 +112,7 @@ class BrandExtractor:
                         # Try to find and download logo
                         await self._extract_logo(page)
                         
+                        await browser.close()
                         return True
                         
                     except Exception as e:
