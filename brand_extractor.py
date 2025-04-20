@@ -43,18 +43,36 @@ class BrandExtractor:
             self.log(f"Starting fetch_page for URL: {self.url}")
             async with async_playwright() as playwright:
                 self.log("Launching browser...")
-                browser = await playwright.chromium.launch(
-                    headless=True,
-                    args=['--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage']
-                )
+                try:
+                    browser = await playwright.chromium.launch(
+                        headless=True,
+                        args=['--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage']
+                    )
+                except Exception as e:
+                    self.log(f"Failed to launch browser: {str(e)}")
+                    if self.debug:
+                        traceback.print_exc()
+                    return False
                 
                 self.log("Creating new page...")
-                page = await browser.new_page()
+                try:
+                    page = await browser.new_page()
+                except Exception as e:
+                    self.log(f"Failed to create new page: {str(e)}")
+                    if self.debug:
+                        traceback.print_exc()
+                    return False
                 
                 self.log("Setting headers...")
-                await page.set_extra_http_headers({
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0 Safari/537.36'
-                })
+                try:
+                    await page.set_extra_http_headers({
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0 Safari/537.36'
+                    })
+                except Exception as e:
+                    self.log(f"Failed to set headers: {str(e)}")
+                    if self.debug:
+                        traceback.print_exc()
+                    # Continue anyway as this isn't critical
                 
                 self.log(f"Navigating to URL: {self.url}")
                 try:
@@ -69,16 +87,13 @@ class BrandExtractor:
                         self.log("Error: No response received from page")
                         return False
                     if not response.ok:
-                        self.log(f"Error: HTTP {response.status} received")
+                        self.log(f"Error: HTTP {response.status} received for {self.url}")
                         return False
                         
-                    # Wait for the page to be relatively stable
-                    self.log("Waiting for network to be idle...")
-                    try:
-                        await page.wait_for_load_state('networkidle', timeout=10000)
-                    except Exception as e:
-                        self.log(f"Warning: Network did not become idle: {str(e)}")
-                        # Continue anyway as this isn't critical
+                    # Print response headers for debugging
+                    if self.debug:
+                        headers = await response.all_headers()
+                        self.log(f"Response headers: {json.dumps(headers, indent=2)}")
                         
                 except Exception as e:
                     self.log(f"Error during page navigation: {str(e)}")
@@ -86,14 +101,13 @@ class BrandExtractor:
                         traceback.print_exc()
                     return False
 
-                self.log("Extracting CSS...")
+                # Wait for the page to be relatively stable
+                self.log("Waiting for network to be idle...")
                 try:
-                    await self.extract_css(page)
+                    await page.wait_for_load_state('networkidle', timeout=10000)
                 except Exception as e:
-                    self.log(f"Error extracting CSS: {str(e)}")
-                    if self.debug:
-                        traceback.print_exc()
-                    # Continue without CSS - we might still get some content
+                    self.log(f"Warning: Network did not become idle: {str(e)}")
+                    # Continue anyway as this isn't critical
 
                 self.log("Getting page content...")
                 try:
@@ -103,6 +117,8 @@ class BrandExtractor:
                         return False
                     self.soup = BeautifulSoup(content, 'lxml')
                     self.log(f"Page content length: {len(content)}")
+                    if self.debug:
+                        self.log(f"First 500 chars of content: {content[:500]}")
                 except Exception as e:
                     self.log(f"Error getting page content: {str(e)}")
                     if self.debug:
@@ -189,7 +205,7 @@ class BrandExtractor:
                 self.log("Page fetch completed successfully")
                 return True
         except Exception as e:
-            self.log(f"Error in fetch_page: {str(e)}")
+            self.log(f"Critical error in fetch_page: {str(e)}")
             if self.debug:
                 traceback.print_exc()
             return False

@@ -41,15 +41,23 @@ if st.button("Generate Report") and url:
                                          capture_output=True, text=True)
                     if debug_mode:
                         st.write(f"Debug: Playwright install output: {result.stdout}")
+                        if result.stderr:
+                            st.write(f"Debug: Playwright install errors: {result.stderr}")
                     if result.returncode != 0:
                         st.error(f"Playwright installation failed: {result.stderr}")
                         return None
                 
                 progress_text.text("Creating extractor instance...")
                 progress_bar.progress(20)
+                
+                # Validate URL format
+                if not url.startswith(('http://', 'https://')):
+                    st.error("❌ URL must start with http:// or https://")
+                    return None
+                
                 extractor = BrandExtractor(url, output_dir=temp_dir, auto_open=False, debug=debug_mode)
                 
-                progress_text.text("Analyzing website...")
+                progress_text.text("Starting website analysis...")
                 progress_bar.progress(30)
                 
                 # Set a timeout for the extraction process
@@ -57,12 +65,18 @@ if st.button("Generate Report") and url:
                     result = await asyncio.wait_for(extractor.extract_branding(), timeout=60)  # 60 second timeout
                     if debug_mode:
                         st.write(f"Debug: Raw extraction result: {result}")
+                        
+                    if not result:
+                        st.error("❌ Extraction failed - no result returned")
+                        return None
+                        
                 except asyncio.TimeoutError:
                     st.error("❌ The analysis took too long to complete. Please try again or try a different URL.")
                     return None
                 except Exception as e:
-                    st.error(f"Error during extraction: {str(e)}")
+                    st.error(f"❌ Error during extraction: {str(e)}")
                     if debug_mode:
+                        st.write("Full error traceback:")
                         st.code(traceback.format_exc())
                     return None
                 
@@ -73,18 +87,25 @@ if st.button("Generate Report") and url:
                     if debug_mode:
                         st.write(f"Debug: PDF path: {result['pdf']}")
                         st.write(f"Debug: File exists: {os.path.exists(result['pdf'])}")
+                        st.write(f"Debug: File size: {os.path.getsize(result['pdf']) if os.path.exists(result['pdf']) else 'N/A'}")
+                    
+                    if not os.path.exists(result['pdf']):
+                        st.error("❌ PDF file was not created")
+                        return None
+                        
                     progress_bar.progress(100)
                     progress_text.text("Report generated successfully!")
                     return result['pdf']
                 else:
                     if debug_mode:
                         st.error(f"Debug: Result object: {result}")
-                    st.error("No PDF generated in the result")
+                    st.error("❌ No PDF generated in the result")
                     return None
                     
             except Exception as e:
-                st.error(f"Extraction error: {str(e)}")
+                st.error(f"❌ Extraction error: {str(e)}")
                 if debug_mode:
+                    st.write("Full error traceback:")
                     st.code(traceback.format_exc())
                 return None
 
