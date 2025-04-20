@@ -39,177 +39,126 @@ class BrandExtractor:
             print(f"DEBUG: {message}")
 
     async def fetch_page(self):
-        try:
-            self.log(f"Starting fetch_page for URL: {self.url}")
-            async with async_playwright() as playwright:
-                self.log("Launching browser...")
-                try:
+        max_retries = 2
+        current_retry = 0
+        
+        while current_retry <= max_retries:
+            try:
+                self.log(f"Attempt {current_retry + 1} of {max_retries + 1}")
+                async with async_playwright() as playwright:
                     browser = await playwright.chromium.launch(
                         headless=True,
-                        args=['--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage']
-                    )
-                except Exception as e:
-                    self.log(f"Failed to launch browser: {str(e)}")
-                    if self.debug:
-                        traceback.print_exc()
-                    return False
-                
-                self.log("Creating new page...")
-                try:
-                    page = await browser.new_page()
-                except Exception as e:
-                    self.log(f"Failed to create new page: {str(e)}")
-                    if self.debug:
-                        traceback.print_exc()
-                    return False
-                
-                self.log("Setting headers...")
-                try:
-                    await page.set_extra_http_headers({
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0 Safari/537.36'
-                    })
-                except Exception as e:
-                    self.log(f"Failed to set headers: {str(e)}")
-                    if self.debug:
-                        traceback.print_exc()
-                    # Continue anyway as this isn't critical
-                
-                self.log(f"Navigating to URL: {self.url}")
-                try:
-                    # Set shorter timeout for initial page load
-                    response = await page.goto(
-                        self.url,
-                        wait_until='domcontentloaded',
-                        timeout=30000  # 30 seconds timeout
+                        args=[
+                            '--disable-gpu',
+                            '--no-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-web-security',
+                            '--disable-features=IsolateOrigins,site-per-process',
+                            '--ignore-certificate-errors'
+                        ]
                     )
                     
-                    if not response:
-                        self.log("Error: No response received from page")
-                        return False
-                    if not response.ok:
-                        self.log(f"Error: HTTP {response.status} received for {self.url}")
-                        return False
+                    context = await browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        ignore_https_errors=True,
+                        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+                    
+                    page = await context.new_page()
+                    
+                    # More reliable page load strategy
+                    try:
+                        response = await page.goto(
+                            self.url,
+                            wait_until='networkidle',
+                            timeout=45000  # 45 seconds timeout
+                        )
                         
-                    # Print response headers for debugging
-                    if self.debug:
-                        headers = await response.all_headers()
-                        self.log(f"Response headers: {json.dumps(headers, indent=2)}")
-                        
-                except Exception as e:
-                    self.log(f"Error during page navigation: {str(e)}")
-                    if self.debug:
-                        traceback.print_exc()
-                    return False
-
-                # Wait for the page to be relatively stable
-                self.log("Waiting for network to be idle...")
-                try:
-                    await page.wait_for_load_state('networkidle', timeout=10000)
-                except Exception as e:
-                    self.log(f"Warning: Network did not become idle: {str(e)}")
-                    # Continue anyway as this isn't critical
-
-                self.log("Getting page content...")
-                try:
-                    content = await page.content()
-                    if not content:
-                        self.log("Error: No content received from page")
-                        return False
-                    self.soup = BeautifulSoup(content, 'lxml')
-                    self.log(f"Page content length: {len(content)}")
-                    if self.debug:
-                        self.log(f"First 500 chars of content: {content[:500]}")
-                except Exception as e:
-                    self.log(f"Error getting page content: {str(e)}")
-                    if self.debug:
-                        traceback.print_exc()
-                    return False
-
-                self.log("Looking for logo...")
-                try:
-                    # Try to find a logo image
-                    logo_found = False
-                    logo_tag = self.soup.find('img', {'alt': re.compile(r'logo', re.I)})
-                    if logo_tag and logo_tag.get('src'):
-                        logo_url = logo_tag['src']
-                        if logo_url.startswith('//'):
-                            logo_url = 'https:' + logo_url
-                        elif logo_url.startswith('/'):
-                            logo_url = self.url.rstrip('/') + logo_url
-                        elif not logo_url.startswith('http'):
-                            logo_url = self.url.rstrip('/') + '/' + logo_url
-                        try:
-                            self.log(f"Downloading logo from: {logo_url}")
-                            logo_response = requests.get(logo_url, stream=True)
-                            if logo_response.status_code == 200:
-                                logo_ext = os.path.splitext(logo_url.split('?')[0])[-1].lower()
-                                logo_path = os.path.join(self.output_dir, 'logo.png')
-                                os.makedirs(self.output_dir, exist_ok=True)
-                                if logo_ext == '.svg':
-                                    try:
-                                        import cairosvg
-                                        cairosvg.svg2png(bytestring=logo_response.content, write_to=logo_path)
-                                    except Exception as svg_err:
-                                        self.log(f"Error converting SVG logo to PNG: {svg_err}")
-                                        # Continue without logo
-                                else:
-                                    with open(logo_path, 'wb') as f:
-                                        f.write(logo_response.content)
-                                self.logo_path = logo_path
-                                logo_found = True
-                                self.log(f"Logo saved to: {logo_path}")
-                        except Exception as e:
-                            self.log(f"Error downloading logo image: {e}")
-                            # Continue without logo
-
-                    # If no logo image was found, try favicon or og:image
-                    if not logo_found:
-                        self.log("Looking for favicon or og:image...")
-                        icon_link = self.soup.find('link', rel=re.compile(r'(icon|shortcut icon)', re.I))
-                        if not icon_link:
-                            meta_logo = self.soup.find('meta', property='og:image')
-                            if meta_logo and meta_logo.get('content'):
-                                logo_url = meta_logo['content']
+                        if not response:
+                            raise Exception("No response received from page")
+                            
+                        if not response.ok:
+                            if response.status == 404:
+                                raise Exception(f"Page not found (404)")
+                            elif response.status == 403:
+                                raise Exception(f"Access forbidden (403)")
                             else:
-                                logo_url = None
+                                raise Exception(f"HTTP {response.status} received")
+                        
+                        # Wait for content to be actually loaded
+                        await page.wait_for_selector('body', timeout=10000)
+                        
+                        # Get the page content
+                        content = await page.content()
+                        if not content:
+                            raise Exception("No content received from page")
+                            
+                        self.soup = BeautifulSoup(content, 'lxml')
+                        
+                        # Extract CSS and other content
+                        await self.extract_css(page)
+                        
+                        # Try to find and download logo
+                        await self._extract_logo(page)
+                        
+                        return True
+                        
+                    except Exception as e:
+                        if current_retry == max_retries:
+                            self.log(f"Final attempt failed: {str(e)}")
+                            return False
                         else:
-                            logo_url = icon_link.get('href')
+                            self.log(f"Attempt {current_retry + 1} failed: {str(e)}")
+                            current_retry += 1
+                            await asyncio.sleep(2)  # Wait 2 seconds before retrying
+                            continue
+                            
+            except Exception as e:
+                if current_retry == max_retries:
+                    self.log(f"Critical error in fetch_page: {str(e)}")
+                    return False
+                else:
+                    current_retry += 1
+                    await asyncio.sleep(2)
+                    continue
+                    
+        return False
 
-                        if logo_url:
-                            self.log(f"Found alternative logo: {logo_url}")
-                            if logo_url.startswith('//'):
-                                logo_url = 'https:' + logo_url
-                            elif logo_url.startswith('/'):
-                                logo_url = self.url.rstrip('/') + logo_url
-                            elif not logo_url.startswith('http'):
-                                logo_url = self.url.rstrip('/') + '/' + logo_url
-                            try:
-                                logo_response = requests.get(logo_url, stream=True)
-                                if logo_response.status_code == 200:
-                                    logo_ext = os.path.splitext(logo_url.split('?')[0])[-1].lower()
-                                    if logo_ext not in ['.jpg', '.jpeg', '.png']:
-                                        logo_ext = '.png'
-                                    logo_path = os.path.join(self.output_dir, f'logo{logo_ext}')
-                                    os.makedirs(self.output_dir, exist_ok=True)
-                                    with open(logo_path, 'wb') as f:
-                                        f.write(logo_response.content)
-                                    self.logo_path = logo_path
-                                    self.log(f"Alternative logo saved to: {logo_path}")
-                            except Exception as e:
-                                self.log(f"Error downloading fallback logo: {e}")
-                                # Continue without logo
-                except Exception as e:
-                    self.log(f"Error processing logo: {e}")
-                    # Continue without logo - this shouldn't fail the whole process
-
-                self.log("Page fetch completed successfully")
-                return True
-        except Exception as e:
-            self.log(f"Critical error in fetch_page: {str(e)}")
-            if self.debug:
-                traceback.print_exc()
-            return False
+    async def _extract_logo(self, page):
+        """Helper method to extract logo with retry logic"""
+        try:
+            # First try: Look for img with 'logo' in alt text or src
+            logo_selector = "img[alt*='logo' i], img[src*='logo' i]"
+            logo_element = await page.query_selector(logo_selector)
             
+            if not logo_element:
+                # Second try: Look for common logo class names
+                logo_element = await page.query_selector(".logo img, .site-logo img, #logo img")
+                
+            if logo_element:
+                logo_url = await logo_element.get_attribute('src')
+                if logo_url:
+                    if logo_url.startswith('//'):
+                        logo_url = 'https:' + logo_url
+                    elif logo_url.startswith('/'):
+                        logo_url = self.url.rstrip('/') + logo_url
+                    elif not logo_url.startswith('http'):
+                        logo_url = self.url.rstrip('/') + '/' + logo_url
+                        
+                    try:
+                        logo_response = requests.get(logo_url, timeout=10, verify=False)
+                        if logo_response.status_code == 200:
+                            os.makedirs(self.output_dir, exist_ok=True)
+                            logo_path = os.path.join(self.output_dir, 'logo.png')
+                            with open(logo_path, 'wb') as f:
+                                f.write(logo_response.content)
+                            self.logo_path = logo_path
+                    except Exception as e:
+                        self.log(f"Error downloading logo: {str(e)}")
+                        
+        except Exception as e:
+            self.log(f"Error extracting logo: {str(e)}")
+
     async def extract_css(self, page):
         try:
             # Extract inline styles
