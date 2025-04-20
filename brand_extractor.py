@@ -414,14 +414,39 @@ class BrandExtractor:
         return filename
 
     async def extract_branding(self):
-        if not await self.fetch_page():
+        try:
+            if not await self.fetch_page():
+                print("Error: Failed to fetch page")
+                return None
+            
+            print("Extracting fonts...")
+            self.extract_fonts()
+            
+            print("Extracting colors...")
+            self.extract_colors()
+            
+            print("Analyzing themes...")
+            self.analyze_themes()
+            
+            print("Generating PDF report...")
+            pdf_path = self.generate_pdf_report()
+            if not pdf_path:
+                print("Error: Failed to generate PDF report")
+                return None
+                
+            print("Generating JSON report...")
+            json_path = self.generate_json_report()
+            if not json_path:
+                print("Error: Failed to generate JSON report")
+                return None
+                
+            print(f"Reports generated successfully: PDF={pdf_path}, JSON={json_path}")
+            return {'pdf': pdf_path, 'json': json_path}
+        except Exception as e:
+            print(f"Error in extract_branding: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
-        self.extract_fonts()
-        self.extract_colors()
-        self.analyze_themes()
-        pdf_path = self.generate_pdf_report()
-        json_path = self.generate_json_report()
-        return {'pdf': pdf_path, 'json': json_path}
 
 async def get_url_from_prompt():
     questions = [
