@@ -45,16 +45,21 @@ class BrandExtractor:
         while current_retry <= max_retries:
             try:
                 self.log(f"Attempt {current_retry + 1} of {max_retries + 1}")
+                
+                # Try to install browser first
+                try:
+                    import subprocess
+                    self.log("Installing browser dependencies...")
+                    subprocess.run(["playwright", "install-deps", "chromium"], 
+                                capture_output=True, text=True, check=True)
+                    self.log("Installing browser...")
+                    subprocess.run(["playwright", "install", "chromium"], 
+                                capture_output=True, text=True, check=True)
+                except Exception as e:
+                    self.log(f"Browser installation note: {str(e)}")
+                
                 async with async_playwright() as playwright:
-                    # Try to install browsers if needed
-                    try:
-                        import subprocess
-                        subprocess.run(["playwright", "install", "chromium"], 
-                                    capture_output=True, text=True, check=True)
-                    except Exception as e:
-                        self.log(f"Note: Browser pre-installation attempt: {str(e)}")
-                        # Continue anyway as the browser might already be installed
-                    
+                    self.log("Launching browser...")
                     browser = await playwright.chromium.launch(
                         headless=True,
                         args=[
@@ -65,24 +70,31 @@ class BrandExtractor:
                             '--disable-features=IsolateOrigins,site-per-process',
                             '--ignore-certificate-errors',
                             '--disable-setuid-sandbox',
-                            '--disable-software-rasterizer'
+                            '--disable-software-rasterizer',
+                            '--disable-accelerated-2d-canvas',
+                            '--no-first-run',
+                            '--no-zygote',
+                            '--single-process',
+                            '--disable-dev-tools'
                         ]
                     )
                     
+                    self.log("Creating browser context...")
                     context = await browser.new_context(
-                        viewport={'width': 1920, 'height': 1080},
+                        viewport={'width': 1280, 'height': 720},
                         ignore_https_errors=True,
                         user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     )
                     
+                    self.log("Creating new page...")
                     page = await context.new_page()
                     
-                    # More reliable page load strategy
                     try:
+                        self.log(f"Navigating to {self.url}...")
                         response = await page.goto(
                             self.url,
-                            wait_until='domcontentloaded',  # Changed from networkidle
-                            timeout=30000  # 30 seconds timeout
+                            wait_until='domcontentloaded',
+                            timeout=20000  # 20 seconds timeout
                         )
                         
                         if not response:
@@ -96,43 +108,47 @@ class BrandExtractor:
                             else:
                                 raise Exception(f"HTTP {response.status} received")
                         
-                        # Wait for content to be actually loaded
+                        self.log("Waiting for page content...")
                         await page.wait_for_selector('body', timeout=5000)
                         
-                        # Get the page content
+                        self.log("Getting page content...")
                         content = await page.content()
                         if not content:
                             raise Exception("No content received from page")
                             
                         self.soup = BeautifulSoup(content, 'lxml')
                         
-                        # Extract CSS and other content
+                        self.log("Extracting CSS...")
                         await self.extract_css(page)
                         
-                        # Try to find and download logo
+                        self.log("Looking for logo...")
                         await self._extract_logo(page)
                         
+                        self.log("Closing browser...")
                         await browser.close()
+                        
                         return True
                         
                     except Exception as e:
+                        self.log(f"Error during page processing: {str(e)}")
                         if current_retry == max_retries:
-                            self.log(f"Final attempt failed: {str(e)}")
                             return False
-                        else:
-                            self.log(f"Attempt {current_retry + 1} failed: {str(e)}")
-                            current_retry += 1
-                            await asyncio.sleep(2)  # Wait 2 seconds before retrying
-                            continue
+                        current_retry += 1
+                        await asyncio.sleep(2)
+                        continue
+                    finally:
+                        try:
+                            await browser.close()
+                        except:
+                            pass
                             
             except Exception as e:
+                self.log(f"Critical error: {str(e)}")
                 if current_retry == max_retries:
-                    self.log(f"Critical error in fetch_page: {str(e)}")
                     return False
-                else:
-                    current_retry += 1
-                    await asyncio.sleep(2)
-                    continue
+                current_retry += 1
+                await asyncio.sleep(2)
+                continue
                     
         return False
 
